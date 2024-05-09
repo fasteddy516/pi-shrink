@@ -130,6 +130,17 @@ EOF
 reboot
 exit
 }
+
+# Clear the old machine-id
+sudo rm -f /etc/machine-id
+sudo systemd-machine-id-setup
+
+# Set a unique hostname using the last three octets of the MAC address for eth0
+LAST_OCTETS=$(ip link show eth0 | awk '/ether/ {print $2}' | awk -F: '{printf "%s%s%s", $4, $5, $6}')
+NEW_HOSTNAME="raspberrypi-$LAST_OCTETS"
+echo "$NEW_HOSTNAME" | sudo tee /etc/hostname
+sudo sed -i "s/127.0.1.1.*/127.0.1.1 $NEW_HOSTNAME/" /etc/hosts
+
 raspi_config_expand() {
 /usr/bin/env raspi-config --expand-rootfs
 if [[ $? != 0 ]]; then
@@ -181,7 +192,7 @@ debug=false
 repair=false
 parallel=false
 verbose=false
-prep=false
+prep=true
 ziptool=""
 
 while getopts ":adhprsvzZ" opt; do
@@ -189,7 +200,7 @@ while getopts ":adhprsvzZ" opt; do
 		a) parallel=true;;
 		d) debug=true;;
 		h) help;;
-		p) prep=true;;
+		p) prep=false;;
 		r) repair=true;;
 		s) should_skip_autoexpand=true ;;
 		v) verbose=true;;
@@ -317,7 +328,7 @@ else
 fi
 
 if [[ $prep == true ]]; then
-	info "Syspreping: Removing logs, apt archives, dhcp leases and ssh hostkeys"
+	info "Syspreping: Removing logs, apt archives, dhcp leases, ssh hostkeys and wifi credentials"
 	mountdir=$(mktemp -d)
 	mount "$loopback" "$mountdir"
 	rm -rvf "$mountdir"/var/cache/apt/archives/* "$mountdir"/var/lib/dhcpcd5/* "$mountdir"/var/tmp/* "$mountdir"/tmp/*
@@ -325,6 +336,10 @@ if [[ $prep == true ]]; then
 	find "$mountdir"/var/log -type f \( -name "*.[0-9]" -o -name "*.gz" -o -name "*.prev" -o -name "*.prior" -o -name "*.old" -o -name "*.bak" \) -print -exec rm {} \;
 	info "truncating log files"
 	find "$mountdir"/var/log -type f \( -name "*log" -o -name "btmp" -o -name "debug" -o -name "messages" -o -name "wtmp" \) -print -exec truncate --size=0 {} \;
+ 	info "deleting systemd journal files"
+  	rm -rvf "$mountdir"/var/log/journal/*
+   	info "deleting wifi credentials"
+    	rm -vf "$mountdir"/etc/NetworkManager/system-connections/*.nmconnection
 	#check if openssh is enabled
 	if [[ -f "$mountdir/etc/systemd/system/multi-user.target.wants/ssh.service" ]]; then
 		if [[ -f "$mountdir/lib/systemd/system/regenerate_ssh_host_keys.service" ]] && [[ -d "$mountdir/etc/systemd/system/multi-user.target.wants" ]]; then
